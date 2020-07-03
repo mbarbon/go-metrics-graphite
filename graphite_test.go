@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func ExampleWithConfig() {
 	})
 }
 
-func NewTestServer(t *testing.T, prefix string) (map[string]float64, net.Listener, metrics.Registry, Config, *sync.WaitGroup) {
+func NewTestServer(t *testing.T, prefix string) (map[string]float64, net.Listener, metrics.Registry, Config, *sync.WaitGroup, *int32) {
 	res := make(map[string]float64)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -41,11 +42,16 @@ func NewTestServer(t *testing.T, prefix string) (map[string]float64, net.Listene
 	}
 
 	var wg sync.WaitGroup
+	var closed int32
 	go func() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
-				t.Fatal("dummy server error:", err)
+				if atomic.LoadInt32(&closed) == 1 {
+					break
+				} else {
+					t.Fatal("dummy server error:", err)
+				}
 			}
 			r := bufio.NewReader(conn)
 			line, err := r.ReadString('\n')
@@ -74,12 +80,13 @@ func NewTestServer(t *testing.T, prefix string) (map[string]float64, net.Listene
 		Prefix:        prefix,
 	}
 
-	return res, ln, r, c, &wg
+	return res, ln, r, c, &wg, &closed
 }
 
 func TestWrites(t *testing.T) {
-	res, l, r, c, wg := NewTestServer(t, "foobar")
+	res, l, r, c, wg, closed := NewTestServer(t, "foobar")
 	defer l.Close()
+	defer atomic.StoreInt32(closed, 1)
 
 	metrics.GetOrRegisterCounter("foo", r).Inc(2)
 
